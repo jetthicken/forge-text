@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Open Messages…</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: #f6f4f8; color: #1d1c1d; display: flex; min-height: 100vh;
+    align-items: center; justify-content: center; padding: 24px; }
+  .card { background: #fff; border-radius: 16px; box-shadow: 0 8px 30px rgba(0,0,0,.10);
+    max-width: 460px; width: 100%; padding: 26px 22px 22px; text-align: center; }
+  .logo { width: 46px; height: 46px; border-radius: 11px; background: #611f69; color: #fff;
+    font-weight: 800; font-size: 18px; letter-spacing: .5px; display: flex; align-items: center;
+    justify-content: center; margin: 0 auto 14px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: #616061; font-size: 14px; margin: 0 0 20px; }
+  .to { font-size: 13px; color: #611f69; font-weight: 600; margin: 0 0 16px; }
+  .btn { display: block; width: 100%; background: #007a5a; color: #fff; text-decoration: none;
+    font-size: 17px; font-weight: 700; padding: 15px 16px; border-radius: 11px; margin-bottom: 14px; }
+  .btn:active { background: #06603f; }
+  .hint { color: #8a8a8a; font-size: 12.5px; margin: 4px 0 8px; }
+  pre { text-align: left; white-space: pre-wrap; word-break: break-word; background: #f4f3f1;
+    border: 1px solid #e7e5e2; border-radius: 10px; padding: 12px; font-size: 13px; line-height: 1.5;
+    font-family: inherit; margin: 0; }
+  .copy { margin-top: 10px; background: #efe9f1; color: #611f69; border: none; border-radius: 9px;
+    padding: 11px 14px; font-size: 14px; font-weight: 700; width: 100%; }
+  .err { color: #b8362f; font-size: 14px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">TD</div>
+    <h1>Opening your Messages app…</h1>
+    <p class="sub">If it doesn't open automatically, tap the button below.</p>
+    <p class="to" id="to"></p>
+    <a class="btn" id="go" href="#">📲 Open Messages</a>
+    <p class="hint">Message that will be sent:</p>
+    <pre id="msg"></pre>
+    <button class="copy" id="copy" type="button">Copy message</button>
+    <p class="err" id="err" style="display:none">This link is missing its info. Head back to Slack and tap it again.</p>
+  </div>
+<script>
+  (function () {
+    var params = new URLSearchParams(location.hash.slice(1));
+    var phone = params.get("p") || "";
+    var body = params.get("b") || "";
+    var els = { to: "to", go: "go", msg: "msg", copy: "copy", err: "err" };
+    var $ = function (id) { return document.getElementById(id); };
+
+    if (!phone || !body) {
+      $("err").style.display = "block";
+      $("go").style.display = "none";
+      $("copy").style.display = "none";
+      $("msg").style.display = "none";
+      $("to").style.display = "none";
+      return;
+    }
+
+    // iOS/macOS use "&body="; Android and others use "?body="
+    var ua = (navigator.userAgent || "").toLowerCase();
+    var isApple = /iphone|ipad|ipod|macintosh/.test(ua);
+    var sep = isApple ? "&" : "?";
+    var smsUrl = "sms:" + phone + sep + "body=" + encodeURIComponent(body);
+
+    $("to").textContent = "To: " + phone;
+    $("msg").textContent = body;
+    $("go").setAttribute("href", smsUrl);
+
+    $("copy").addEventListener("click", function () {
+      (navigator.clipboard ? navigator.clipboard.writeText(body) : Promise.reject())
+        .then(function () { $("copy").textContent = "Copied ✓"; })
+        .catch(function () {
+          var r = document.createRange(); r.selectNode($("msg"));
+          var s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+          try { document.execCommand("copy"); $("copy").textContent = "Copied ✓"; } catch (e) {}
+        });
+    });
+
+    // Auto-attempt to open Messages shortly after load.
+    setTimeout(function () { window.location.href = smsUrl; }, 350);
+  })();
+</script>
+</body>
+</html>
