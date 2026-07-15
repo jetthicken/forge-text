@@ -1,0 +1,6 @@
+# raw exports & intermediates contain customer PII — never commit
+*.csv
+dash_accounts.json
+*.xls
+*.numbers
+node_modules/
