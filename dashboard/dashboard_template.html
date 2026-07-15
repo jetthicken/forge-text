@@ -82,7 +82,7 @@
   .tv th,.tv td{text-align:right;padding:4px 8px;border-bottom:1px solid var(--grid);font-variant-numeric:tabular-nums}
   .tv th:first-child,.tv td:first-child{text-align:left}
   .tv th{color:var(--ink-3);font-weight:600}
-  .meterwrap{margin:14px 0 6px}
+  .meterwrap{margin:30px 0 6px}
   .meter{position:relative;height:14px;border-radius:7px;overflow:visible}
   .meter .trk{position:absolute;inset:0;border-radius:7px}
   .meter .fill{position:absolute;top:0;bottom:0;left:0;border-radius:7px 3px 3px 7px}
@@ -163,14 +163,17 @@
       <button data-v="B" aria-pressed="false">Brightspeed</button>
     </div>
     <span class="flab">Weeks</span>
-    <div class="seg" id="seg-range" role="group" aria-label="Week range">
+    <div class="seg" id="seg-range" role="group" aria-label="Period">
       <button data-v="all" aria-pressed="true">All</button>
-      <button data-v="4" aria-pressed="false">Last 4</button>
-      <button data-v="2" aria-pressed="false">Last 2</button>
+      <button data-v="m6" aria-pressed="false">June</button>
+      <button data-v="m7" aria-pressed="false">July</button>
+      <button data-v="4" aria-pressed="false">Last 4 wks</button>
+      <button data-v="2" aria-pressed="false">Last 2 wks</button>
     </div>
-    <span class="flab" title="Resolved = installs ÷ (installs + cancels). All-sold = installs ÷ every account sold (pendings count against you until they install).">Rate basis</span>
+    <span class="flab" title="Had a chance = installs ÷ (installs + cancels + pendings already past their install date); orders not yet due are left out. Resolved = installs ÷ (installs + cancels). All-sold = installs ÷ every account sold.">Rate basis</span>
     <div class="seg" id="seg-basis" role="group" aria-label="Install-rate basis">
-      <button data-v="resolved" aria-pressed="true">Resolved</button>
+      <button data-v="chance" aria-pressed="true">Had a chance</button>
+      <button data-v="resolved" aria-pressed="false">Resolved</button>
       <button data-v="gross" aria-pressed="false">All sold</button>
     </div>
   </div>
@@ -251,14 +254,16 @@
 
   <div class="foot card">
     <b>Definitions &amp; assumptions.</b>
-    Install rate (resolved) = installed ÷ (installed + canceled); pendings are excluded until they resolve. All-sold basis = installed ÷ every account sold.
+    Install rate (had-a-chance, the default) = installed ÷ (installed + canceled + pendings already past their install date) — an order scheduled beyond the report date hasn’t had its chance yet and doesn’t count either way. Resolved basis = installed ÷ (installed + canceled). All-sold basis = installed ÷ every account sold.
     <b>Past-pending</b> = still pending and past its order due date (Brightspeed) or scheduled activation date (Verizon/Frontier).
     Brightspeed “abandoned” rows carry no order number and are excluded — they are dead leads, not sold accounts.
     Verizon/Frontier rows are product lines and are rolled up to one record per account number, anchored on the fiber data line.
     Verizon and Frontier are treated as one company.
     <b>Pay tiers</b>: &lt;70% → $10, 70–75% → $15, ≥75% → $20 per installed account; commission figures assume payout applies to installed accounts.
     The Verizon/Frontier export includes no street addresses on fiber orders, so the heat map covers Brightspeed accounts (plus the few Verizon mobile sales that carry a zip).
-    Weeks start Monday; the latest week is partial (data through <span id="dataend"></span>).
+    The exports weren’t pulled live, so “past” is judged against each report’s own as-of date, inferred from the latest activity in the file: Brightspeed <span id="asof-b"></span>, Verizon/Frontier <span id="asof-v"></span>.
+    Reporting window: June 1 onward, except Brightspeed which is intentionally limited to orders created July 1 onward.
+    Weeks start Monday; the latest week is partial.
   </div>
 </div>
 <div class="tt" id="tt" role="status"></div>
@@ -272,7 +277,7 @@ const ZIPXY = __ZIPXY__;
 (function(){
 "use strict";
 const $ = (id)=>document.getElementById(id);
-const state = {co:"ALL", range:"all", basis:"resolved", minN:0, q:"", sortK:"sold", sortD:-1, pinned:null};
+const state = {co:"ALL", range:"all", basis:"chance", minN:0, q:"", sortK:"sold", sortD:-1, pinned:null};
 const CO_NAME = {V:"Verizon · Frontier", B:"Brightspeed", ALL:"All companies"};
 const fmt = (n)=>n.toLocaleString("en-US");
 const money = (n)=>"$"+Math.round(n).toLocaleString("en-US");
@@ -281,6 +286,8 @@ const TIERS = [{min:0,max:.70,pay:10,cls:"tier-1",lab:"< 70%"},
                {min:.70,max:.75,pay:15,cls:"tier-2",lab:"70 – 75%"},
                {min:.75,max:1.01,pay:20,cls:"tier-3",lab:"≥ 75%"}];
 const tierOf = r=>TIERS[r>=.75?2:r>=.70?1:0];
+const rateOf = (I,C,PP,sold)=>state.basis==="chance" ? (I+C+PP?I/(I+C+PP):NaN)
+  : state.basis==="resolved" ? (I+C?I/(I+C):NaN) : (sold?I/sold:NaN);
 
 const ALLWEEKS = [...new Set(RAW.accounts.map(a=>a.wk).filter(Boolean))].sort();
 const LASTWK = ALLWEEKS[ALLWEEKS.length-1];
@@ -289,6 +296,10 @@ const wkLab = (iso)=>{const d=new Date(iso+"T00:00:00");
 
 function weeksInRange(){
   if(state.range==="all") return ALLWEEKS;
+  if(state.range==="m6"||state.range==="m7"){
+    const mo = state.range==="m6"?"06":"07";
+    return ALLWEEKS.filter(w=>w.slice(5,7)===mo); // by sale-week Monday's month
+  }
   return ALLWEEKS.slice(-parseInt(state.range,10));
 }
 function filt(){
@@ -298,9 +309,10 @@ function filt(){
 function agg(list){
   const o={sold:list.length,I:0,C:0,P:0,PP:0,CH:0};
   for(const a of list){o[a.st]++; if(a.pp)o.PP++; if(a.ch)o.CH++;}
+  o.rateC = o.I+o.C+o.PP ? o.I/(o.I+o.C+o.PP) : NaN;
   o.rateR = o.I+o.C ? o.I/(o.I+o.C) : NaN;
   o.rateG = o.sold ? o.I/o.sold : NaN;
-  o.rate = state.basis==="resolved"?o.rateR:o.rateG;
+  o.rate = state.basis==="chance"?o.rateC:state.basis==="resolved"?o.rateR:o.rateG;
   return o;
 }
 
@@ -463,8 +475,10 @@ function lineChart(container, rows, series, opts){
 
 /* ---------- rate chart ---------- */
 function chartRate(rows){
-  rows.forEach(r=>{r.rateW = state.basis==="resolved" ? (r.I+r.C?r.I/(r.I+r.C):NaN) : (r.sold?r.I/r.sold:NaN);});
-  $("note-rate").textContent = state.basis==="resolved"
+  rows.forEach(r=>{r.rateW = rateOf(r.I,r.C,r.PP,r.sold);});
+  $("note-rate").textContent = state.basis==="chance"
+    ? "Of each week’s accounts that have had their chance to install (installed, canceled, or past their install date), the share that installed. Pay tiers marked at 70% and 75%."
+    : state.basis==="resolved"
     ? "Of each week’s accounts that have resolved (installed or canceled), the share that installed. Pay tiers marked at 70% and 75%."
     : "Installed share of every account sold that week (pendings count against). Pay tiers marked at 70% and 75%.";
   lineChart("ch-rate", rows, [{k:"rateW",label:"Install rate",color:css("--line"),fmt:pct}],
@@ -565,7 +579,13 @@ function renderTier(t){
   const worst = t.I/((t.I+t.C+t.PP)||1);
   const best = (t.I+t.P)/((t.I+t.P+t.C)||1);
   let need="";
-  if(state.basis==="resolved"){
+  if(state.basis==="chance"){
+    const D = t.I+t.C+t.PP;
+    const n70 = Math.ceil(Math.max(0,.70*D-t.I)), n75 = Math.ceil(Math.max(0,.75*D-t.I));
+    if(r<.70) need = "Installing <b>"+fmt(n70)+"</b> of your "+fmt(t.PP)+" past-pending orders gets you to <b>70% ($15)</b>"+(n70>t.PP?" — not reachable from past-pendings alone, so protect the orders still coming due":"")+"; <b>75% ($20)</b> takes <b>"+fmt(n75)+"</b>. Chasing past-pendings is the fastest money on the board.";
+    else if(r<.75) need = "Installing <b>"+fmt(n75)+"</b> of your "+fmt(t.PP)+" past-pending orders gets you to <b>75% ($20)</b>.";
+    else need = "Top tier — every order that comes due and installs keeps you here.";
+  } else if(state.basis==="resolved"){
     const n70 = Math.ceil(Math.max(0,(0.70*(t.I+t.C)-t.I)/0.30));
     const n75 = Math.ceil(Math.max(0,(0.75*(t.I+t.C)-t.I)/0.25));
     if(r<.70) need = "To reach <b>70% ($15)</b> you need the next <b>"+fmt(n70)+"</b> resolutions to be installs with zero cancels; <b>75% ($20)</b> needs <b>"+fmt(n75)+"</b>. Every save of a past-pending order moves this fastest.";
@@ -579,7 +599,7 @@ function renderTier(t){
   const tiers = TIERS.map(x=>'<div class="tierbox'+(x===tier?" on":"")+'">'+x.lab+' install rate<b>$'+x.pay+' / account</b></div>').join("");
   $("tiercard").innerHTML =
     '<h2>Pay tier — '+esc(CO_NAME[state.co])+'</h2>'+
-    '<p class="note">'+(state.basis==="resolved"?"Resolved basis: installs ÷ (installs + cancels).":"All-sold basis: installs ÷ every account sold.")+'</p>'+
+    '<p class="note">'+(state.basis==="chance"?"Had-a-chance basis: installs ÷ (installs + cancels + past-due pendings). Orders not yet due don’t count either way.":state.basis==="resolved"?"Resolved basis: installs ÷ (installs + cancels).":"All-sold basis: installs ÷ every account sold.")+'</p>'+
     '<div class="meterwrap"><div class="meter">'+
       '<div class="trk" style="background:'+trkCol+'"></div>'+
       '<div class="fill" style="width:'+px(r)+'%;background:'+fillCol+'"></div>'+
@@ -588,7 +608,9 @@ function renderTier(t){
     '</div><div class="binlabs" style="display:flex;justify-content:space-between;font-size:10.5px;color:var(--ink-3);margin-top:4px"><span>50%</span><span>100%</span></div></div>'+
     '<div class="tiers">'+tiers+'</div>'+
     '<div class="scen">Current: <b>'+pct(r)+'</b> → <b>$'+tier.pay+'/account</b>. '+need+
-    '<br>Scenario — if every past-pending order cancels: <b>'+pct(worst)+'</b> ('+ (tierOf(worst).pay===tier.pay?"same tier":"$"+tierOf(worst).pay+"/acct") +'). If every pending installs: <b>'+pct(best)+'</b> ($'+tierOf(best).pay+'/acct).</div>';
+    (state.basis==="chance"
+      ? '<br>Scenario — if all '+fmt(t.PP)+' past-pendings install: <b>'+pct((t.I+t.PP)/((t.I+t.C+t.PP)||1))+'</b>. If every pending (due or not) installs: <b>'+pct(best)+'</b> ($'+tierOf(best).pay+'/acct).</div>'
+      : '<br>Scenario — if every past-pending order cancels: <b>'+pct(worst)+'</b> ('+ (tierOf(worst).pay===tier.pay?"same tier":"$"+tierOf(worst).pay+"/acct") +'). If every pending installs: <b>'+pct(best)+'</b> ($'+tierOf(best).pay+'/acct).</div>');
 }
 
 /* ---------- reps ---------- */
@@ -601,7 +623,7 @@ function repRows(list){
   }
   const rows=Object.values(m);
   rows.forEach(r=>{
-    r.rate = state.basis==="resolved" ? (r.I+r.C?r.I/(r.I+r.C):NaN) : r.I/r.sold;
+    r.rate = rateOf(r.I,r.C,r.PP,r.sold);
     r.crate = r.C/r.sold; r.pprate = r.PP/r.sold;
   });
   return rows;
@@ -669,8 +691,8 @@ function renderRepTable(rows){
 
 /* ---------- map ---------- */
 const BINS=[
-  {max:.55,col:"#8c1b1b",lab:"<55"},{max:.65,col:"#cf3f36",lab:"55"},{max:.70,col:"#efa08f",lab:"65"},
-  {max:.75,col:"#9ec5f4",lab:"70"},{max:.85,col:"#3987e5",lab:"75"},{max:1.01,col:"#10427f",lab:"85+"}];
+  {max:.55,col:"#c62828",lab:"<55"},{max:.65,col:"#e0662b",lab:"55"},{max:.70,col:"#eda100",lab:"65"},
+  {max:.75,col:"#d0c11f",lab:"70"},{max:.85,col:"#7fb336",lab:"75"},{max:1.01,col:"#1e7d32",lab:"85+"}];
 const LOWN="#98968f";
 function binCol(rate,resolved){ if(resolved<3||!isFinite(rate))return LOWN;
   for(const b of BINS) if(rate<b.max) return b.col; return BINS[BINS.length-1].col;}
@@ -719,10 +741,10 @@ function mapInit(){
   $("mz-out").addEventListener("click",()=>zoomTo(mapView.k/1.5,487.5,305));
   $("mz-reset").addEventListener("click",()=>{mapView={x:0,y:0,k:1};apply();drawBubbles();state.pinned=null;renderZipDetail(null);});
   // legend
-  $("maplegend").innerHTML = '<b style="color:var(--ink)">Install rate ('+(state.basis==="resolved"?"resolved":"all-sold")+' basis)</b>'+
+  $("maplegend").innerHTML = '<b style="color:var(--ink)">Install rate ('+(state.basis==="chance"?"had-a-chance":state.basis==="resolved"?"resolved":"all-sold")+' basis)</b>'+
     '<div class="bins">'+BINS.map(b=>'<span style="background:'+b.col+'"></span>').join("")+'</div>'+
     '<div class="binlabs">'+BINS.map(b=>"<span>"+b.lab+"</span>").join("")+'<span>%</span></div>'+
-    '<div style="margin-top:6px"><span class="sw" style="background:'+LOWN+'"></span> fewer than 3 resolved accounts · bubble size = accounts sold</div>';
+    '<div style="margin-top:6px"><span class="sw" style="background:'+LOWN+'"></span> fewer than 3 accounts due (inst + canc + past-due) · bubble size = accounts sold</div>';
 }
 function zipAgg(list){
   const m={};
@@ -732,8 +754,8 @@ function zipAgg(list){
     (r.reps[a.rep]??={sold:0,I:0,C:0}); r.reps[a.rep].sold++; r.reps[a.rep][a.st]===undefined?0:r.reps[a.rep][a.st]++;
   }
   Object.values(m).forEach(r=>{
-    r.res=r.I+r.C;
-    r.rate = state.basis==="resolved" ? (r.res?r.I/r.res:NaN) : r.I/r.sold;
+    r.res=r.I+r.C+r.PP;
+    r.rate = rateOf(r.I,r.C,r.PP,r.sold);
   });
   return m;
 }
@@ -827,7 +849,7 @@ function renderAll(){
 let mapDone=false;
 function mapInit_once(){ if(!mapDone){mapInit(); mapChips(); mapDone=true;}
   else{ // refresh legend basis label
-    $("maplegend").querySelector("b").textContent="Install rate ("+(state.basis==="resolved"?"resolved":"all-sold")+" basis)";
+    $("maplegend").querySelector("b").textContent="Install rate ("+(state.basis==="chance"?"had-a-chance":state.basis==="resolved"?"resolved":"all-sold")+" basis)";
   }}
 
 /* ---------- controls ---------- */
@@ -850,7 +872,8 @@ let rsz; addEventListener("resize",()=>{clearTimeout(rsz);rsz=setTimeout(renderA
 // charts bake computed colors into SVG attributes — re-render when the theme flips
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change",()=>renderAll());
 new MutationObserver(()=>renderAll()).observe(document.documentElement,{attributes:true,attributeFilter:["data-theme"]});
-$("dataend").textContent = new Date(RAW.today+"T00:00:00").toLocaleDateString("en-US",{month:"long",day:"numeric"});
+const dfmt = iso=>new Date(iso+"T00:00:00").toLocaleDateString("en-US",{month:"long",day:"numeric"});
+$("asof-b").textContent = dfmt(RAW.asof.B); $("asof-v").textContent = dfmt(RAW.asof.V);
 renderAll();
 })();
 </script>

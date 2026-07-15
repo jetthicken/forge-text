@@ -15,8 +15,8 @@ Open `forge_ops_dashboard.html` in any browser — no server or network needed.
    python3 extract_inputs.py Orders.xls Verizon_Sales_Activity_Report.numbers
    ```
 
-2. Build the account-level dataset (edit `TODAY` in `build_data.py` to the
-   report date — it drives the past-pending cutoff):
+2. Build the account-level dataset (update `ASOF` and `BS_START` in
+   `build_data.py` for the new exports — they drive the past-pending cutoff):
 
    ```
    python3 build_data.py          # -> dash_accounts.json
@@ -41,8 +41,15 @@ Open `forge_ops_dashboard.html` in any browser — no server or network needed.
 - **Sold account** — Brightspeed rows with an order number (ABANDONED rows are
   dead leads and excluded); Verizon rows rolled up to one record per account
   number, anchored on the fiber DATA line. Verizon and Frontier are one company.
-- **Install rate (resolved)** — installed ÷ (installed + canceled). The
-  "all sold" toggle divides by every sold account instead.
+- **Install rate (had-a-chance, default)** — installed ÷ (installed +
+  canceled + pendings already past their install date); orders not yet due
+  don't count either way. Toggles for resolved (÷ installed + canceled) and
+  all-sold bases.
+- **As-of dates** — the exports aren't pulled live; "past" is judged against
+  each report's own as-of date (`ASOF` in `build_data.py`), inferred from the
+  latest activity in the file.
+- **Reporting window** — June 1 onward; Brightspeed intentionally limited to
+  orders created July 1 onward (`BS_START`).
 - **Past-pending** — still pending and past its order due date (Brightspeed) or
   scheduled activation date (Verizon).
 - **Pay tiers** — <70% → $10, 70–75% → $15, ≥75% → $20 per installed account.

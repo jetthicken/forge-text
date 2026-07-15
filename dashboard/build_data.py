@@ -21,7 +21,11 @@ Pending > Canceled).
 import json
 import pandas as pd
 
-TODAY = pd.Timestamp("2026-07-15")
+# Per-report "as of" dates inferred from the data itself (the exports were
+# not pulled live): latest activity timestamp in each file.
+ASOF = {"B": pd.Timestamp("2026-07-14"), "V": pd.Timestamp("2026-07-11")}
+# Reporting windows: everything from Jun 1 on, but Brightspeed only from Jul 1.
+BS_START = pd.Timestamp("2026-07-01")
 
 
 def monday(ts):
@@ -43,6 +47,7 @@ zip_info = {}
 bs = pd.read_csv("brightspeed_orders.csv")
 sold = bs[bs["Order #"].notna()].copy()
 sold["create"] = pd.to_datetime(sold["Create Time"], errors="coerce")
+sold = sold[sold["create"] >= BS_START]
 sold["due"] = pd.to_datetime(sold["Order Due Date"], errors="coerce")
 sold["chg"] = pd.to_datetime(sold["Status Change Date"], errors="coerce")
 
@@ -72,7 +77,7 @@ for _, r in sold.iterrows():
         "rep": str(r["Sales Person Name"]).title(),
         "zip": z,
         "st": st,
-        "pp": 1 if (st == "P" and pd.notna(r["due"]) and r["due"] < TODAY) else 0,
+        "pp": 1 if (st == "P" and pd.notna(r["due"]) and r["due"] < ASOF["B"]) else 0,
         "ch": 0,
         "wk": monday(r["create"]),
         "iw": monday(r["chg"]) if st == "I" else None,
@@ -107,7 +112,7 @@ for acct, g in vz.groupby("customer_account_number"):
         "rep": str(a["agent_name"]).title(),
         "zip": z,
         "st": st,
-        "pp": 1 if (st == "P" and pd.notna(a["sched"]) and a["sched"] < TODAY) else 0,
+        "pp": 1 if (st == "P" and pd.notna(a["sched"]) and a["sched"] < ASOF["V"]) else 0,
         "ch": 1 if a["order_status"] == "Inactive" else 0,
         "wk": monday(a["od"]),
         "iw": monday(a["act"]) if (st == "I" and pd.notna(a["act"])) else None,
@@ -121,15 +126,17 @@ for z, info in zip_info.items():
         info["state"] = "VA"
 
 with open("dash_accounts.json", "w") as f:
-    json.dump({"today": TODAY.strftime("%Y-%m-%d"), "accounts": accounts,
-               "zips": zip_info}, f)
+    json.dump({"asof": {k: v.strftime("%Y-%m-%d") for k, v in ASOF.items()},
+               "bsStart": BS_START.strftime("%Y-%m-%d"),
+               "accounts": accounts, "zips": zip_info}, f)
 
 # sanity summary
 df = pd.DataFrame(accounts)
 for c, g in df.groupby("c"):
     i = (g["st"] == "I").sum(); cc = (g["st"] == "C").sum(); p = (g["st"] == "P").sum()
-    print(f"{c}: sold={len(g)} inst={i} canc={cc} pend={p} pastpend={g['pp'].sum()} "
-          f"resolved_rate={i/(i+cc):.1%} gross_rate={i/len(g):.1%}")
-i = (df["st"] == "I").sum(); cc = (df["st"] == "C").sum()
-print(f"ALL: sold={len(df)} resolved_rate={i/(i+cc):.1%} gross_rate={i/len(df):.1%}")
+    pp = g["pp"].sum()
+    print(f"{c}: sold={len(g)} inst={i} canc={cc} pend={p} pastpend={pp} "
+          f"chance_rate={i/(i+cc+pp):.1%} resolved_rate={i/(i+cc):.1%} gross_rate={i/len(g):.1%}")
+i = (df["st"] == "I").sum(); cc = (df["st"] == "C").sum(); pp = df["pp"].sum()
+print(f"ALL: sold={len(df)} chance_rate={i/(i+cc+pp):.1%} resolved_rate={i/(i+cc):.1%} gross_rate={i/len(df):.1%}")
 print("weeks:", sorted(df["wk"].dropna().unique()))
